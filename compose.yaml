@@ -1,0 +1,32 @@
+# Comments are provided throughout this file to help you get started.
+# If you need more help, visit the Docker Compose reference guide at
+# https://docs.docker.com/go/compose-spec-reference/
+
+# Here the instructions define your application as a service called "server".
+# This service is built from the Dockerfile in the current directory.
+# You can add other services your application may depend on here, such as a
+# database or a cache. For examples, see the Awesome Compose repository:
+# https://github.com/docker/awesome-compose
+services:
+  simpleSite-ts:
+    image: tailscale/tailscale:latest
+    hostname: simpleSite
+    environment:
+      - TS_AUTHKEY=tskey-auth-km2tDK1YiF11CNTRL-cEGeLMwwCQ64PWYVT3tsQ6EKfpNVknqFS
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/simpleSite.json
+      - TS_USERSPACE=true
+    volumes:
+      - /mnt/6TB/appdata/python/simpleSite/ts-config:/config
+      - /mnt/6TB/appdata/python/simpleSite/ts-state:/var/lib/tailscale
+    restart: unless-stopped
+  server:
+    build:
+      context: .
+    develop:
+      watch:
+        - action: rebuild
+          path: .
+    #ports:
+    #  - 8777:8777
+    network_mode: service:simpleSite-ts

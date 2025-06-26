@@ -1,0 +1,5 @@
+#fastapi==0.111.0
+#flask==3.1.1
+streamlit
+st-gsheets-connection
+streamlit_browser_storage
