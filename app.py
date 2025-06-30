@@ -4,11 +4,18 @@ import asyncio
 import duckdb
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
+import streamlit_nested_layout
 
+#TO-DO: integrate video
 
-#from streamlit_browser_storage import LocalStorage
+#TO-DO: make it work with no prior recorded workout
+#TO-DO handle multi users/profil to get sessions?
+#TO-DO: Make Note its own field in gsheet
+#TO-DO avoid global variable
 
-#s = LocalStorage(key="exercise_data")
+from streamlit_browser_storage import LocalStorage
+
+s = LocalStorage(key="exercise_data")
 
 st.set_page_config(page_title="Gym Tracker", page_icon=":mechanical_arm:", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
@@ -60,6 +67,7 @@ def getDataTemplate():
         "Total Lbs": [],
         "Primary Muscles": [],
         "Secondary Muscles": [],
+        "Sets Completion": [],
         "Completed": [],
         "Date":[],
         "Rep": [],
@@ -67,30 +75,23 @@ def getDataTemplate():
     }
 
 def setDFFromGoogleData(dataframe):
-    query = "SELECT Count(Completed) as NbrUncompleted, Max(Date) as Date, Max(Session) as Session  FROM dataframe WHERE Completed = " + str(False)
+    lastWorkOutRecord = dataframe[-1:]#duckdb.query("SELECT Date, Session FROM dataframe").to_df().tail(1) #issue being when there is 2 sessions on the same day, it gets order wrongly
+    lastWorkOutDate =  lastWorkOutRecord["Date"].iloc[0]
+    lastWorkoutSession =  lastWorkOutRecord["Session"].iloc[0]
+    
+    query = "SELECT Count(Completed) as NbrUncompleted, Max(Date) as Date, Max(Session) as Session FROM dataframe WHERE Completed = " + str(False) + " AND Date ='" + str(lastWorkOutDate) +"'"
     #st.write(duckdb.query(query).to_df())
 
     infoUncompletedSet = duckdb.query(query).to_df()
-    nbrUncompletedSets= infoUncompletedSet.count()["NbrUncompleted"]
-    #st.write(infoUncompletedSet["Date"][0])
+    
+    nbrUncompletedSets = infoUncompletedSet.count()["NbrUncompleted"]
+    #st.write(infoUncompletedSet)
     completedSet = duckdb.query("SELECT * FROM dataframe WHERE NOT (Session = '" + str(infoUncompletedSet["Session"][0]) + "' AND Date = '" + str(infoUncompletedSet["Date"][0]) + "')").to_df()
 
     uncompletedSet = {}
     if nbrUncompletedSets > 0:
-        
-        uncompletedSet = duckdb.query("SELECT * FROM dataframe WHERE Date = '" + str(infoUncompletedSet["Date"][0]) + "'").to_df()
-        #st.write(completedSet)
-
-        #st.write(duckdb.query("SELECT * FROM dataframe WHERE Date != Cast(" + str(True) + " AS datetime)").to_df())
-        #st.write(uncompletedSet)
-        # store set without last uncomplet set, retrieve uncompleted set and store is as 2 in progress
-    #else:
-    #    st.write(duckdb.query("SELECT * FROM dataframe WHERE Completed = " + str(True)).to_df())
-    return {"allData": dataframe, "completedSet": completedSet, "uncompletedSet": uncompletedSet}
-    #uncompleteExercise = duckdb.query("SELECT * FROM ghdata WHERE Completed = " + str(False)).to_df()
-
-
-
+        uncompletedSet = duckdb.query(f"SELECT * FROM dataframe WHERE Session = '{lastWorkoutSession}' AND Date = '" + str(infoUncompletedSet["Date"][0]) + "'").to_df()
+    return {"allData": dataframe, "completedSet": completedSet, "uncompletedSet": uncompletedSet, "lastWorkoutSession": lastWorkoutSession, "lastWorkOutDate": lastWorkOutDate}
 
 
 def getGoogleSheetData():
@@ -100,25 +101,8 @@ def getGoogleSheetData():
 
 existingData = setDFFromGoogleData(getGoogleSheetData()) #{"allData": dataframe, "completedSet": completedSet, "uncompletedSet": uncompletedSet}
 
-
-def initDataSet(extraFilter="Session IS NOT NULL"):
-
-    queryString="Select * FROM Raph WHERE " + extraFilter
-    myConn = conn.query(queryString)
-    gsdata = pd.DataFrame(myConn)
-
-    uncompleteExercise = duckdb.query("SELECT * FROM gsdata WHERE Completed = " + str(False)).to_df()
-
-
-    #st.write("test convert to DataFrame - uncompleteExercise")
-    #st.write(uncompleteExercise)
-    return myConn
-
-def initAll():
-    initDataSet()
-
 def fixGoogleFormulainAllDataSet(dataToSend,allDataSet):
-
+    st.write(dataToSend)
     dataToSend = pd.concat([pd.DataFrame(allDataSet), pd.DataFrame(dataToSend)], ignore_index=True)
     setSize = len(dataToSend.get("Sets x Reps"))
     initSetxReps = []
@@ -133,7 +117,7 @@ def fixGoogleFormulainAllDataSet(dataToSend,allDataSet):
     for i in range(setSize):
         initSetxReps.append(f"=VLOOKUP(B{i+2},Exercise!A:C,3,False)")
         initEquip.append(f"=VLOOKUP(B{i+2},Exercise!A:B,2,False)")
-        initTotalLbs.append(f"=SUM(L{i+2}:N{i+2})*E{i+2}")
+        initTotalLbs.append(f"=SUM(O{i+2}:Q{i+2})*E{i+2}")
         initPrimaryMuscles.append(f"=VLOOKUP(B{i+2},Exercise!A:E,4,False)")
         initSecondaryMuscles.append(f"=VLOOKUP(B{i+2},Exercise!A:E,5,False)")
         initSplit.append(f"=IF(LEFT(F{i+2},8)<>\"Previous\", SPLIT(F{i+2}, \",\"))")
@@ -172,8 +156,6 @@ def updateDataToSend(data):
     data["Primary Muscles"] = [None] * nbrExercise
     data["Secondary Muscles"] = [None] * nbrExercise
     data["Completed"] = []
-    #st.write("Updating data to send...")
-    #st.write(data)
     for i in range(len(exercice)):
         compactExcerciseName = exercice[i].replace(" ", "")
         note = st.session_state.get(f"input{compactExcerciseName}")
@@ -182,7 +164,7 @@ def updateDataToSend(data):
         lbsExercise = lbs[i]
         reps = (data.get("Rep")[i]).split(",")
         dones = (data.get("Dones")[i]).split(",")
-        
+        setsCompletion=[]
 
         if edited_rows != {}:
             for j in range(len(reps)):
@@ -194,16 +176,19 @@ def updateDataToSend(data):
                     if edited_rows.get(j).get("Done") is not None:
                         #st.write("edited_rows.get(j).get('Done'): " + compactExcerciseName + " : row:" + str(j))
                         #st.write(edited_rows.get(j).get('Done'))
+                        
                         dones[j] = edited_rows.get(j).get("Done")>0
         
         completed = True
         for j in range(len(dones)):
             completed = completed and (dones[j]==True or dones[j]=="True")
+            setsCompletion.append(str(int((dones[j]==True or dones[j]=="True")>0)))
 
         if note != None:
             reps.append(note)
         note = (",").join(reps)
         data.get("Completed").append(completed)
+        data.get("Sets Completion").append(",".join(setsCompletion))
         data.get("Notes").append(note)
     
     del data["Rep"]
@@ -216,10 +201,8 @@ def click_Submitbutton(exerciseDataFromForm):
 
     st.session_state.title = "Gym Tracker"
     dataToSend = updateDataToSend(exerciseDataFromForm)
-    #st.write("dataToSend")
-    #st.dataframe(pd.DataFrame(dataToSend))
-    #allDataSet = initDataSet("Session IS NOT NULL AND Date<>'2025/06/29'")#filter out incomplete
     dataToSend = fixGoogleFormulainAllDataSet(dataToSend, existingData.get("completedSet"))
+    #s.set("lastSubmittedData", "dataToSend")
     conn = st.connection("gsheets", type=GSheetsConnection)
     conn.update(worksheet="Raph",data=(pd.DataFrame(dataToSend)))
     #initAll()
@@ -234,6 +217,10 @@ def buildForm(exerciseData, resumed=False):
     dataToSend = getDataTemplate()
     session=exerciseData.get('Session', 0).iloc[0]
     with st.form("my_form"):
+        if resumed:
+            previousWorkOutData = getLastWorkout(session, existingData.get('lastWorkOutDate'))
+            #st.write(exerciseData.get('lastWorkOutDate'))
+            #st.write(previousWorkOutData)
         for i in range(len(exerciseData.get("Exercise", 0))):
                 with st.container():
                     
@@ -242,9 +229,10 @@ def buildForm(exerciseData, resumed=False):
                     #with st.form(compactExcerciseName):
 
                     aNotes=exerciseData.get('Notes', 0).iloc[i].split(",")
+                    noteValue = None
+                    aDone = exerciseData.get('Sets Completion')[i].split(",")
                     if resumed:
-                        done = (exerciseData.get('Completed', 0).iloc[i]>0)
-                        if done:
+                        if exerciseData.get('Completed', 0).iloc[i]>0:
                             expanded = False
                         else:
                             expanded = True
@@ -253,40 +241,43 @@ def buildForm(exerciseData, resumed=False):
                     else:
                         done = False
                         expanded = True
-                        noteValue = None
+                    setsxReps=exerciseData.get("Sets x Reps", 0).iloc[i]
+                    asetsxReps = setsxReps.split(" x ")
+                    nbrSets=int(asetsxReps[0])
 
                     with st.expander(excerciseName, expanded=expanded):
                             col1, col2 = st.columns(2)
-                            
-                            setsxReps=exerciseData.get("Sets x Reps", 0).iloc[i]
-                            asetsxReps = setsxReps.split(" x ")
-
                             col1.subheader(f"{excerciseName}: {setsxReps}")   
-                            col2.write(f"Equipment: {exerciseData.get('Equipment', 0).iloc[i]}")
-                            
-                            col2.write(f"Primary Muscles: {exerciseData.get('Primary Muscles', 0).iloc[i]}")
-                            col2.write(f"Secondary Muscles: {exerciseData.get('Secondary Muscles', 0).iloc[i]}")
-                            col2.write(f"Total Lbs: {exerciseData.get('Total Lbs', 0).iloc[i]}")
                             weight = exerciseData.get('Lbs', 0).iloc[i]
-                            col1.write(f"Lbs: {weight}")
-
-                            
-                            noteValue = None
-                            
                             aDF = []
-                            if len(asetsxReps)==2:
-                                for j in range(int(asetsxReps[0])):
-                                    aDF.append(dict(Weight=weight,
-                                        Rep=aNotes[j],
-                                        Done = done,
-                                        )
+                            for j in range(nbrSets):
+                                if resumed:
+                                    done = int(aDone[j])>0
+                                else:
+                                    done=False
+                                aDF.append(dict(Weight=weight,
+                                    Rep=aNotes[j],
+                                    Done = done,
                                     )
+                                )
                             
                             editedDF=col1.data_editor(pd.DataFrame(aDF),key=f"data_editor{compactExcerciseName}", hide_index=True, num_rows="fixed")
-                            
-
-                            if len(aNotes) > int(asetsxReps[0]):
-                                col2.write(f"Previous Notes: {aNotes[3]}")
+                            with col2.expander("Last Session Info", expanded=True):
+                                if resumed:
+                                    aNotes = previousWorkOutData.get('Notes', 0).iloc[i].split(",")
+                                    if len(aNotes) > nbrSets:
+                                        st.write(f"Notes: {aNotes[3]}")
+                                else:
+                                    if len(aNotes) > nbrSets:
+                                        st.write(f"Notes: {aNotes[3]}")                                
+                                st.write(f"Lbs: {weight}")
+                                st.write(f"Total Lbs: {exerciseData.get('Total Lbs', 0).iloc[i]}")
+                            with col2.expander("Description", expanded=False):
+                                st.write(f"Equipment: {exerciseData.get('Equipment', 0).iloc[i]}")
+                                st.write(f"Primary Muscles: {exerciseData.get('Primary Muscles', 0).iloc[i]}")
+                                st.write(f"Secondary Muscles: {exerciseData.get('Secondary Muscles', 0).iloc[i]}")
+                            #with col2.expander("Video", expanded=False):
+                            #    st.video("https://app.fitnessai.com/exercises/00431201-Barbell-Full-Squat-Thighs.mp4",autoplay=False, loop=True)
                             text_input=col1.text_input(label="Notes", value=noteValue, key=f"input{compactExcerciseName}", placeholder="Enter Notes")
                             reps=editedDF.loc[0]["Rep"]+","+editedDF.loc[1]["Rep"]+","+editedDF.loc[2]["Rep"]
                             dones=str(editedDF.loc[0]["Done"])+","+str(editedDF.loc[1]["Done"])+","+str(editedDF.loc[2]["Done"])
@@ -303,14 +294,16 @@ def buildForm(exerciseData, resumed=False):
         st.form_submit_button('Submit', on_click=click_Submitbutton, args=[dataToSend])
 
 
-def getLastWorkout(session):
+def getLastWorkout(session, LastWorkoutDate = None):
     #initAll()
     #existingData = {completedSet": completedSet, "uncompletedSet": uncompletedSet}
-    if session is not None:
-        allData = existingData["allData"]
+    allData = existingData["allData"]
+    if LastWorkoutDate!=None:
+        queryString=f"Select Max(Date) as LastDate, Count(Date) as NbrExercise FROM allData WHERE Session='{session}' AND Date!='{LastWorkoutDate}' Group By Date ORDER BY LastDate Desc;"
+    else:
         queryString=f"Select Max(Date) as LastDate, Count(Date) as NbrExercise FROM allData WHERE Session='{session}' Group By Date ORDER BY LastDate Desc;"
-        #st.write(duckdb.query(queryString).to_df())
-        lastWorkoutDate = duckdb.query(queryString).to_df()["LastDate"][0]
+    lastWorkoutDate = duckdb.query(queryString).to_df()["LastDate"][0]
+    if session is not None:
         queryString=f"Select * FROM allData WHERE Session='{session}' AND Date='{lastWorkoutDate}';"
         exerciseData = duckdb.query(queryString).to_df()
     return exerciseData
@@ -333,13 +326,18 @@ if st.session_state.resumeWorkoutclicked==False and len(existingData["uncomplete
 
 if st.session_state.resumeWorkoutclicked==True:
     exerciseData = existingData["uncompletedSet"]
+    st.write(exerciseData)
     buildForm(exerciseData, True)
     
 
 if st.session_state.createWorkoutclicked:
     options = ["A", "B"]
-    selection = st.pills("Workout", options, selection_mode="single")
+    
+    defaultOption = options[(options.index(existingData["lastWorkoutSession"])+1)%len(options)]
+
+    selection = st.pills("Workout", options, default = defaultOption, selection_mode="single")
     #existingData: {"allData": dataframe, "completedSet": completedSet, "uncompletedSet": uncompletedSet}
     if selection is not None:
         exerciseData = getLastWorkout(selection)
         buildForm(exerciseData)
+
