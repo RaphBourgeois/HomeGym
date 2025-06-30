@@ -7,11 +7,13 @@ from streamlit_gsheets import GSheetsConnection
 import streamlit_nested_layout
 
 #TO-DO: integrate video
-
+#TO-DO: Make Note its own field in gsheet
+#TO-DO: separate cachbuilding logic from buildForm
 #TO-DO: make it work with no prior recorded workout
 #TO-DO handle multi users/profil to get sessions?
-#TO-DO: Make Note its own field in gsheet
+
 #TO-DO avoid global variable
+
 
 from streamlit_browser_storage import LocalStorage
 
@@ -102,7 +104,7 @@ def getGoogleSheetData():
 existingData = setDFFromGoogleData(getGoogleSheetData()) #{"allData": dataframe, "completedSet": completedSet, "uncompletedSet": uncompletedSet}
 
 def fixGoogleFormulainAllDataSet(dataToSend,allDataSet):
-    st.write(dataToSend)
+    #st.write(dataToSend)
     dataToSend = pd.concat([pd.DataFrame(allDataSet), pd.DataFrame(dataToSend)], ignore_index=True)
     setSize = len(dataToSend.get("Sets x Reps"))
     initSetxReps = []
@@ -196,16 +198,14 @@ def updateDataToSend(data):
     return data
 
 def click_Submitbutton(exerciseDataFromForm):
-    #to-do: if workout completed, true else false
     st.session_state.createWorkoutclicked = True
 
     st.session_state.title = "Gym Tracker"
     dataToSend = updateDataToSend(exerciseDataFromForm)
     dataToSend = fixGoogleFormulainAllDataSet(dataToSend, existingData.get("completedSet"))
-    #s.set("lastSubmittedData", "dataToSend")
     conn = st.connection("gsheets", type=GSheetsConnection)
     conn.update(worksheet="Raph",data=(pd.DataFrame(dataToSend)))
-    #initAll()
+    
     st.session_state.createWorkoutclicked = False
     st.session_state.resumeWorkoutclicked=False
 
@@ -326,7 +326,7 @@ if st.session_state.resumeWorkoutclicked==False and len(existingData["uncomplete
 
 if st.session_state.resumeWorkoutclicked==True:
     exerciseData = existingData["uncompletedSet"]
-    st.write(exerciseData)
+    #st.write(exerciseData)
     buildForm(exerciseData, True)
     
 
